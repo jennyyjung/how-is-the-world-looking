@@ -17,3 +17,14 @@ class ArticleInput(BaseModel):
     url: str
     title: str
     cleaned_text: str | None = None
+
+
+class IngestionRunRequest(BaseModel):
+    source_keys: list[str] | None = None
+    limit_per_source: int = Field(default=10, ge=1, le=100)
+
+
+class IngestionRunResponse(BaseModel):
+    ingested: int
+    skipped: int
+    sources: dict

@@ -1,5 +1,9 @@
 # First-Week Build Plan (MVP)
 
+This week is now scoped to a narrow product target:
+
+> **User goal:** help tech professionals quickly catch up on major tech + latest GenAI developments with neutral, no-fluff factual briefs.
+
 ## Day 1: Foundation and schema
 - Create repository structure (`backend`, `docs`, tests).
 - Implement SQLAlchemy models for Source, Article, Claim, EventCluster.
@@ -7,6 +11,10 @@
 - Add deterministic IDs and timestamp defaults.
 
 ## Day 2: Ingestion skeleton
+- Add source registry config (3-5 sources):
+  - 1 wire-style source
+  - 2 major tech publications
+  - 1 official vendor/source-of-record feed (company blog/research updates)
 - Add source registry config (3-5 sources).
 - Build ingestion interface (`fetch -> normalize -> store`).
 - Persist articles with unique URL protection.
@@ -34,10 +42,29 @@
 - Add validators:
   - no unsupported summary sentence.
   - no opinion/prediction in factual bullets.
+  - speculation language blacklist in factual bullets.
 - Add unit tests for claim parser and validator logic.
 
 ## Day 7: Demo slice
 - Run ingestion on seed sources.
+- Produce 5 event cards for tech/genAI topics.
+- Manual QA for factual consistency and confidence calibration.
+
+## What is still missing after Week 1
+- Scheduled ingestion jobs (cron/worker) and retry handling.
+- A deterministic baseline clusterer and regression tests.
+- A concrete source-independence rule to avoid duplicate-wire amplification.
+- Event-card API contract for frontend consumption.
+- Golden dataset for evaluator checks (citation coverage, factual precision).
+
+## Concrete "testable MVP" definition
+The MVP is testable when all of the following are true:
+1. Ingests at least 20 fresh tech/genAI articles from configured sources in one run.
+2. Extracts claims with evidence for at least 80% of ingested articles.
+3. Produces at least 10 event clusters over a rolling 72-hour window.
+4. Generates one summary per cluster with 100% sentence-level citation linkage.
+5. Passes validator checks for unsupported/speculative factual bullets.
+
 - Produce 5 event cards.
 - Manual QA for factual consistency and confidence calibration.
 
@@ -45,3 +72,4 @@
 - Working API with data persistence.
 - End-to-end pipeline for at least one source.
 - Prompt templates + output schema validators.
+- Clear acceptance criteria for moving into Week 2 hardening.
