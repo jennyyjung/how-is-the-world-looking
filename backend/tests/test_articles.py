@@ -10,7 +10,7 @@ def test_create_article_endpoint():
         "source_type": "wire",
         "url": "https://example.com/story-1",
         "title": "Test Story",
-        "cleaned_text": "A factual sentence.",
+        "raw_text": "A factual sentence about an AI model release.",
     }
     response = client.post('/articles', json=payload)
     assert response.status_code == 200

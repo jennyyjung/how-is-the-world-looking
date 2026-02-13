@@ -16,7 +16,7 @@ class ArticleInput(BaseModel):
     source_type: str = "newspaper"
     url: str
     title: str
-    cleaned_text: str | None = None
+    raw_text: str | None = None
 
 
 class IngestionRunRequest(BaseModel):

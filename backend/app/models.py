@@ -28,6 +28,7 @@ class Article(Base):
     title: Mapped[str] = mapped_column(String, nullable=False)
     published_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     cleaned_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    content_hash: Mapped[str | None] = mapped_column(String(64), unique=True, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
     source: Mapped["Source"] = relationship(back_populates="articles")

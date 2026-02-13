@@ -19,7 +19,7 @@ Normalized article fields:
 - `source_type`
 - `url`
 - `title`
-- `cleaned_text`
+- `raw_text`
 - `published_at`
 
 ## Runner behavior
@@ -27,7 +27,9 @@ Normalized article fields:
 - Selects adapters by `source_keys` (or all by default).
 - Fetches normalized records from each adapter.
 - Upserts source records (by source name).
-- Inserts articles with URL uniqueness protection.
+- Cleans raw content into keyword-focused `cleaned_text`.
+- Computes SHA-256 `content_hash` and skips duplicates by hash.
+- Inserts articles with URL uniqueness protection as a secondary guard.
 - Returns per-source ingest/skipped counts.
 
 ## API usage

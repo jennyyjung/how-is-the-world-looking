@@ -8,6 +8,7 @@ Given multiple reports about the same tech/genAI event, produce concise factual 
 ## MVP focus
 - Ingest a small set of tech + GenAI sources.
 - Store raw articles and extracted factual claims.
+- Clean article content into digestible keywords and dedupe by content hash.
 - Cluster claims into event records.
 - Produce concise factual summaries with explicit evidence and uncertainty.
 
@@ -20,22 +21,17 @@ Environment variables:
 - `GITHUB_TOKEN` (optional, increases GitHub API rate limits)
 - `GOOGLE_NEWS_API_KEY` (required for Google News adapter)
 
+Content cleaner (MVP):
+- Removes basic HTML/URL boilerplate
+- Filters common stopwords/news boilerplate terms
+- Produces keyword-focused `cleaned_text` and a SHA-256 `content_hash` for dedupe
+
 ## What to read first
 - `docs/v1-database-schema.md`: v1 relational schema and design notes.
 - `docs/first-week-build-plan.md`: implementation sequence for week one and concrete testable MVP gates.
 - `docs/tech-genai-mvp-next-steps.md`: missing components and week-two plan to ship a testable MVP.
 - `docs/prompts/factual-claim-templates.md`: extraction/summarization prompts and template injections.
 
-## Project layout
-- `backend/`: initial FastAPI service and persistence scaffolding.
-- `docs/`: product, architecture, prompts, and roadmap docs.
-An MVP for a personal news aggregator focused on extracting factual claims, reducing framing, and presenting evidence-backed event summaries.
-
-## MVP focus
-- Ingest a small set of sources.
-- Store raw articles and extracted claims.
-- Cluster claims into event records.
-- Produce concise factual summaries with explicit evidence and uncertainty.
 
 ## Project layout
 - `docs/v1-database-schema.md`: v1 relational schema and design notes.

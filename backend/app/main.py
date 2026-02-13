@@ -31,16 +31,22 @@ def create_article(payload: schemas.ArticleInput, db: Session = Depends(get_db))
         db.add(source)
         db.flush()
 
+    cleaned = content_cleaner.clean_for_keywords(payload.raw_text or payload.title)
+    existing = db.query(models.Article).filter(models.Article.content_hash == cleaned.content_hash).first()
+    if existing:
+        return {"article_id": existing.id, "deduped": True}
+
     article = models.Article(
         source_id=source.id,
         url=payload.url,
         title=payload.title,
-        cleaned_text=payload.cleaned_text,
+        cleaned_text=cleaned.cleaned_text,
+        content_hash=cleaned.content_hash,
     )
     db.add(article)
     db.commit()
     db.refresh(article)
-    return {"article_id": article.id}
+    return {"article_id": article.id, "deduped": False}
 
 
 @app.post("/ingest/run", response_model=schemas.IngestionRunResponse)
