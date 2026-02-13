@@ -32,12 +32,9 @@ Content cleaner (MVP):
 - `docs/tech-genai-mvp-next-steps.md`: missing components and week-two plan to ship a testable MVP.
 - `docs/prompts/factual-claim-templates.md`: extraction/summarization prompts and template injections.
 
-
 ## Project layout
-- `docs/v1-database-schema.md`: v1 relational schema and design notes.
-- `docs/first-week-build-plan.md`: implementation sequence for week one.
-- `docs/prompts/factual-claim-templates.md`: extraction/summarization prompts and template injections.
 - `backend/`: initial FastAPI service and persistence scaffolding.
+- `docs/`: product, architecture, prompts, and roadmap docs.
 
 ## Quickstart (backend)
 ```bash
