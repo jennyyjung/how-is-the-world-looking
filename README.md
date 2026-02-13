@@ -48,8 +48,12 @@ uvicorn app.main:app --reload
 Useful endpoints:
 - `GET /sources`
 - `POST /ingest/run`
+- `POST /extract/claims`
 
 Run tests:
 ```bash
 pytest
 ```
+
+
+Claim extraction endpoint accepts strict JSON model output and persists claims plus evidence spans for an article.

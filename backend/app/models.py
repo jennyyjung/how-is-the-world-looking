@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, Float, ForeignKey, String, Text
+from sqlalchemy import DateTime, Float, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db import Base
@@ -55,7 +55,27 @@ class Claim(Base):
     claim_text: Mapped[str] = mapped_column(Text, nullable=False)
     claim_type: Mapped[str] = mapped_column(String, nullable=False)
     confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
+    extraction_model: Mapped[str | None] = mapped_column(String, nullable=True)
+    extraction_version: Mapped[str | None] = mapped_column(String, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
     article: Mapped["Article"] = relationship(back_populates="claims")
     event_cluster: Mapped["EventCluster"] = relationship(back_populates="claims")
+    evidence_spans: Mapped[list["ClaimEvidence"]] = relationship(
+        back_populates="claim", cascade="all, delete-orphan"
+    )
+
+
+class ClaimEvidence(Base):
+    __tablename__ = "claim_evidence"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    claim_id: Mapped[str] = mapped_column(String, ForeignKey("claims.id"), nullable=False)
+    article_id: Mapped[str] = mapped_column(String, ForeignKey("articles.id"), nullable=False)
+    evidence_text: Mapped[str] = mapped_column(Text, nullable=False)
+    start_char: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    end_char: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    evidence_type: Mapped[str] = mapped_column(String, default="reported_fact")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+    claim: Mapped["Claim"] = relationship(back_populates="evidence_spans")

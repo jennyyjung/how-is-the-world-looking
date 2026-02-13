@@ -28,3 +28,15 @@ class IngestionRunResponse(BaseModel):
     ingested: int
     skipped: int
     sources: dict
+
+
+class ClaimExtractionRunRequest(BaseModel):
+    article_id: str
+    model_output_json: str
+    extraction_model: str | None = None
+    extraction_version: str | None = None
+
+
+class ClaimExtractionRunResponse(BaseModel):
+    claims_created: int
+    evidence_created: int

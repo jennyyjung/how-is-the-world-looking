@@ -1,16 +1,22 @@
-from fastapi import Depends, FastAPI
+from dataclasses import asdict
+
+from fastapi import Depends, FastAPI, HTTPException
 from sqlalchemy.orm import Session
 
 from app import models, schemas
 from app.config.sources import SOURCE_REGISTRY
 from app.db import Base, engine, get_db
 from app.ingestion import IngestionRunner
-from app.db import Base, engine, get_db
+from app.services.article_service import ArticleService
+from app.services.claim_extraction import parse_claim_extraction_json
+from app.services.claim_service import ClaimService
 
 Base.metadata.create_all(bind=engine)
 
 app = FastAPI(title="How Is The World Looking API")
 ingestion_runner = IngestionRunner()
+article_service = ArticleService()
+claim_service = ClaimService()
 
 
 @app.get("/health", response_model=schemas.HealthResponse)
@@ -20,33 +26,20 @@ def health() -> schemas.HealthResponse:
 
 @app.get("/sources")
 def list_sources():
-    return {"sources": [cfg.__dict__ for cfg in SOURCE_REGISTRY.values()]}
+    return {"sources": [asdict(cfg) for cfg in SOURCE_REGISTRY.values()]}
 
 
 @app.post("/articles")
 def create_article(payload: schemas.ArticleInput, db: Session = Depends(get_db)):
-    source = db.query(models.Source).filter(models.Source.name == payload.source_name).first()
-    if source is None:
-        source = models.Source(name=payload.source_name, source_type=payload.source_type)
-        db.add(source)
-        db.flush()
-
-    cleaned = content_cleaner.clean_for_keywords(payload.raw_text or payload.title)
-    existing = db.query(models.Article).filter(models.Article.content_hash == cleaned.content_hash).first()
-    if existing:
-        return {"article_id": existing.id, "deduped": True}
-
-    article = models.Article(
-        source_id=source.id,
+    upsert_result = article_service.create_article_from_raw(
+        db,
+        source_name=payload.source_name,
+        source_type=payload.source_type,
         url=payload.url,
         title=payload.title,
-        cleaned_text=cleaned.cleaned_text,
-        content_hash=cleaned.content_hash,
+        raw_text=payload.raw_text,
     )
-    db.add(article)
-    db.commit()
-    db.refresh(article)
-    return {"article_id": article.id, "deduped": False}
+    return {"article_id": upsert_result.article_id, "deduped": upsert_result.deduped}
 
 
 @app.post("/ingest/run", response_model=schemas.IngestionRunResponse)
@@ -57,3 +50,30 @@ def run_ingestion(payload: schemas.IngestionRunRequest, db: Session = Depends(ge
         limit_per_source=payload.limit_per_source,
     )
     return schemas.IngestionRunResponse(**result)
+
+
+@app.post("/extract/claims", response_model=schemas.ClaimExtractionRunResponse)
+def extract_claims(
+    payload: schemas.ClaimExtractionRunRequest,
+    db: Session = Depends(get_db),
+) -> schemas.ClaimExtractionRunResponse:
+    article = db.query(models.Article).filter(models.Article.id == payload.article_id).first()
+    if article is None:
+        raise HTTPException(status_code=404, detail="article_not_found")
+
+    try:
+        extraction_result = parse_claim_extraction_json(payload.model_output_json)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    persist_result = claim_service.persist_extracted_claims(
+        db,
+        article=article,
+        extraction_result=extraction_result,
+        extraction_model=payload.extraction_model,
+        extraction_version=payload.extraction_version,
+    )
+    return schemas.ClaimExtractionRunResponse(
+        claims_created=persist_result.claims_created,
+        evidence_created=persist_result.evidence_created,
+    )

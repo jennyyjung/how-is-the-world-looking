@@ -6,11 +6,10 @@ from datetime import date, datetime, timedelta, timezone
 from typing import Any, Protocol
 
 import httpx
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.config.sources import SOURCE_REGISTRY
-from app import models
+from app.services.article_service import ArticleService
 
 
 @dataclass
@@ -20,7 +19,7 @@ class NormalizedArticle:
     source_type: str
     url: str
     title: str
-    cleaned_text: str | None = None
+    raw_text: str | None = None
     published_at: datetime | None = None
 
 
@@ -53,7 +52,7 @@ class HackerNewsAdapter:
                         source_type=SOURCE_REGISTRY[self.source_key].source_type,
                         url=payload["url"],
                         title=payload.get("title", "Untitled"),
-                        cleaned_text=payload.get("text"),
+                        raw_text=payload.get("text"),
                         published_at=published,
                     )
                 )
@@ -96,7 +95,7 @@ class GitHubTrendingStarsAdapter:
                         source_type=SOURCE_REGISTRY[self.source_key].source_type,
                         url=repo["html_url"],
                         title=repo["full_name"],
-                        cleaned_text=repo.get("description"),
+                        raw_text=repo.get("description"),
                         published_at=published,
                     )
                 )
@@ -129,7 +128,7 @@ class GoogleNewsAPIAdapter:
                 published = None
                 if article.get("publishedAt"):
                     published = datetime.fromisoformat(article["publishedAt"].replace("Z", "+00:00"))
-                content = article.get("description") or article.get("content")
+                raw_text = article.get("description") or article.get("content")
                 items.append(
                     NormalizedArticle(
                         source_key=self.source_key,
@@ -137,7 +136,7 @@ class GoogleNewsAPIAdapter:
                         source_type=SOURCE_REGISTRY[self.source_key].source_type,
                         url=article["url"],
                         title=article.get("title", "Untitled"),
-                        cleaned_text=content,
+                        raw_text=raw_text,
                         published_at=published,
                     )
                 )
@@ -145,12 +144,13 @@ class GoogleNewsAPIAdapter:
 
 
 class IngestionRunner:
-    def __init__(self) -> None:
+    def __init__(self, article_service: ArticleService | None = None) -> None:
         self.adapters: dict[str, SourceAdapter] = {
             "hacker_news": HackerNewsAdapter(),
             "github_trending_stars": GitHubTrendingStarsAdapter(),
             "google_news_api": GoogleNewsAPIAdapter(),
         }
+        self.article_service = article_service or ArticleService()
 
     def available_sources(self) -> list[str]:
         return list(self.adapters.keys())
@@ -169,26 +169,19 @@ class IngestionRunner:
             source_ingested = 0
             source_skipped = 0
             for item in fetched:
-                source = db.query(models.Source).filter(models.Source.name == item.source_name).first()
-                if source is None:
-                    source = models.Source(name=item.source_name, source_type=item.source_type)
-                    db.add(source)
-                    db.flush()
-
-                article = models.Article(
-                    source_id=source.id,
+                upsert_result = self.article_service.create_article_from_raw(
+                    db,
+                    source_name=item.source_name,
+                    source_type=item.source_type,
                     url=item.url,
                     title=item.title,
-                    cleaned_text=item.cleaned_text,
+                    raw_text=item.raw_text,
                     published_at=item.published_at,
                 )
-                db.add(article)
-                try:
-                    db.commit()
-                    source_ingested += 1
-                except IntegrityError:
-                    db.rollback()
+                if upsert_result.deduped:
                     source_skipped += 1
+                else:
+                    source_ingested += 1
 
             results["ingested"] += source_ingested
             results["skipped"] += source_skipped
