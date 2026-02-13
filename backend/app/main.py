@@ -5,6 +5,7 @@ from app import models, schemas
 from app.config.sources import SOURCE_REGISTRY
 from app.db import Base, engine, get_db
 from app.ingestion import IngestionRunner
+from app.db import Base, engine, get_db
 
 Base.metadata.create_all(bind=engine)
 

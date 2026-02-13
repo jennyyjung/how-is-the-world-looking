@@ -15,6 +15,7 @@ This week is now scoped to a narrow product target:
   - 1 wire-style source
   - 2 major tech publications
   - 1 official vendor/source-of-record feed (company blog/research updates)
+- Add source registry config (3-5 sources).
 - Build ingestion interface (`fetch -> normalize -> store`).
 - Persist articles with unique URL protection.
 
@@ -63,6 +64,9 @@ The MVP is testable when all of the following are true:
 3. Produces at least 10 event clusters over a rolling 72-hour window.
 4. Generates one summary per cluster with 100% sentence-level citation linkage.
 5. Passes validator checks for unsupported/speculative factual bullets.
+
+- Produce 5 event cards.
+- Manual QA for factual consistency and confidence calibration.
 
 ## Deliverables at end of week
 - Working API with data persistence.
