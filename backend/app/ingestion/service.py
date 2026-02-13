@@ -9,9 +9,8 @@ import httpx
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app import models
 from app.config.sources import SOURCE_REGISTRY
-from app.services.content_cleaner import ContentCleaner
+from app import models
 
 
 @dataclass
@@ -21,7 +20,7 @@ class NormalizedArticle:
     source_type: str
     url: str
     title: str
-    raw_text: str | None = None
+    cleaned_text: str | None = None
     published_at: datetime | None = None
 
 
@@ -54,7 +53,7 @@ class HackerNewsAdapter:
                         source_type=SOURCE_REGISTRY[self.source_key].source_type,
                         url=payload["url"],
                         title=payload.get("title", "Untitled"),
-                        raw_text=payload.get("text"),
+                        cleaned_text=payload.get("text"),
                         published_at=published,
                     )
                 )
@@ -97,7 +96,7 @@ class GitHubTrendingStarsAdapter:
                         source_type=SOURCE_REGISTRY[self.source_key].source_type,
                         url=repo["html_url"],
                         title=repo["full_name"],
-                        raw_text=repo.get("description"),
+                        cleaned_text=repo.get("description"),
                         published_at=published,
                     )
                 )
@@ -130,7 +129,7 @@ class GoogleNewsAPIAdapter:
                 published = None
                 if article.get("publishedAt"):
                     published = datetime.fromisoformat(article["publishedAt"].replace("Z", "+00:00"))
-                raw_text = article.get("description") or article.get("content")
+                content = article.get("description") or article.get("content")
                 items.append(
                     NormalizedArticle(
                         source_key=self.source_key,
@@ -138,7 +137,7 @@ class GoogleNewsAPIAdapter:
                         source_type=SOURCE_REGISTRY[self.source_key].source_type,
                         url=article["url"],
                         title=article.get("title", "Untitled"),
-                        raw_text=raw_text,
+                        cleaned_text=content,
                         published_at=published,
                     )
                 )
@@ -152,7 +151,6 @@ class IngestionRunner:
             "github_trending_stars": GitHubTrendingStarsAdapter(),
             "google_news_api": GoogleNewsAPIAdapter(),
         }
-        self.cleaner = ContentCleaner()
 
     def available_sources(self) -> list[str]:
         return list(self.adapters.keys())
@@ -171,12 +169,6 @@ class IngestionRunner:
             source_ingested = 0
             source_skipped = 0
             for item in fetched:
-                cleaned = self.cleaner.clean_for_keywords(item.raw_text or item.title)
-                existing_by_hash = db.query(models.Article).filter(models.Article.content_hash == cleaned.content_hash).first()
-                if existing_by_hash:
-                    source_skipped += 1
-                    continue
-
                 source = db.query(models.Source).filter(models.Source.name == item.source_name).first()
                 if source is None:
                     source = models.Source(name=item.source_name, source_type=item.source_type)
@@ -187,8 +179,7 @@ class IngestionRunner:
                     source_id=source.id,
                     url=item.url,
                     title=item.title,
-                    cleaned_text=cleaned.cleaned_text,
-                    content_hash=cleaned.content_hash,
+                    cleaned_text=item.cleaned_text,
                     published_at=item.published_at,
                 )
                 db.add(article)
