@@ -1,6 +1,6 @@
 # How Is The World Looking
 
-An MVP news intelligence tool for **tech professionals** who want a neutral, no-fluff view of the latest **technology and GenAI** developments.
+Aspiring to be a no-BS way of catching up with news, because the world is too noisy. MVP - **tech professionals** who want a neutral, no-fluff view of the latest **technology and GenAI** developments.
 
 ## Product goal (current scope)
 Given multiple reports about the same tech/genAI event, produce concise factual briefs with source-linked evidence, explicit disagreements, and stated uncertainty.
