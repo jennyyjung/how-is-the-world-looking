@@ -11,6 +11,7 @@ from app.services.article_service import ArticleService
 from app.services.claim_extraction import parse_claim_extraction_json
 from app.services.claim_service import ClaimService
 from app.services.cluster_service import ClusterService
+from app.services.summary_service import SummaryService
 
 Base.metadata.create_all(bind=engine)
 
@@ -19,6 +20,7 @@ ingestion_runner = IngestionRunner()
 article_service = ArticleService()
 claim_service = ClaimService()
 cluster_service = ClusterService()
+summary_service = SummaryService()
 
 
 @app.get("/health", response_model=schemas.HealthResponse)
@@ -93,3 +95,19 @@ def build_clusters(payload: schemas.ClusterBuildRequest, db: Session = Depends(g
         claims_clustered=result.claims_clustered,
         claims_scanned=result.claims_scanned,
     )
+
+
+@app.post("/summaries/build", response_model=schemas.SummaryBuildResponse)
+def build_summaries(payload: schemas.SummaryBuildRequest, db: Session = Depends(get_db)) -> schemas.SummaryBuildResponse:
+    result = summary_service.build_summaries(db, cluster_ids=payload.cluster_ids)
+    return schemas.SummaryBuildResponse(
+        summaries_created=result.summaries_created,
+        citations_created=result.citations_created,
+        relations_created=result.relations_created,
+    )
+
+
+@app.get("/events/latest", response_model=schemas.EventsLatestResponse)
+def get_latest_events(limit: int = 10, db: Session = Depends(get_db)) -> schemas.EventsLatestResponse:
+    events = summary_service.get_latest_events(db, limit=limit)
+    return schemas.EventsLatestResponse(events=[schemas.EventCard(**event) for event in events])

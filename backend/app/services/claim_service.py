@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from app import models
@@ -25,6 +26,19 @@ class ClaimService:
         extraction_version: str | None = None,
     ) -> ClaimPersistResult:
         existing_claims = db.query(models.Claim).filter(models.Claim.article_id == article.id).all()
+        existing_claim_ids = [claim.id for claim in existing_claims]
+
+        if existing_claim_ids:
+            db.query(models.SummaryCitation).filter(models.SummaryCitation.claim_id.in_(existing_claim_ids)).delete(
+                synchronize_session=False
+            )
+            db.query(models.ClaimRelation).filter(
+                or_(
+                    models.ClaimRelation.left_claim_id.in_(existing_claim_ids),
+                    models.ClaimRelation.right_claim_id.in_(existing_claim_ids),
+                )
+            ).delete(synchronize_session=False)
+
         for claim in existing_claims:
             db.delete(claim)
         db.flush()

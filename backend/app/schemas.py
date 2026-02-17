@@ -45,3 +45,28 @@ class ClusterBuildResponse(BaseModel):
     clusters_created: int
     claims_clustered: int
     claims_scanned: int
+
+
+class SummaryBuildRequest(BaseModel):
+    cluster_ids: list[str] | None = None
+
+
+class SummaryBuildResponse(BaseModel):
+    summaries_created: int
+    citations_created: int
+    relations_created: int
+
+
+class EventCard(BaseModel):
+    cluster_id: str
+    cluster_title: str
+    agreed_facts: list[str]
+    disputed_claims: list[str]
+    unknowns: list[str]
+    confidence_rationale: str
+    confidence_score: float | None
+    source_links: list[str]
+
+
+class EventsLatestResponse(BaseModel):
+    events: list[EventCard]

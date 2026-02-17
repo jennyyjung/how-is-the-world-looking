@@ -51,6 +51,8 @@ Useful endpoints:
 - `POST /ingest/run`
 - `POST /extract/claims`
 - `POST /clusters/build`
+- `POST /summaries/build`
+- `GET /events/latest`
 
 Run tests:
 ```bash

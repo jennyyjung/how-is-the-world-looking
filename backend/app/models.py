@@ -79,3 +79,39 @@ class ClaimEvidence(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
     claim: Mapped["Claim"] = relationship(back_populates="evidence_spans")
+
+
+class ClaimRelation(Base):
+    __tablename__ = "claim_relations"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    left_claim_id: Mapped[str] = mapped_column(String, ForeignKey("claims.id"), nullable=False)
+    right_claim_id: Mapped[str] = mapped_column(String, ForeignKey("claims.id"), nullable=False)
+    relation_type: Mapped[str] = mapped_column(String, nullable=False)
+    score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class Summary(Base):
+    __tablename__ = "summaries"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    event_cluster_id: Mapped[str] = mapped_column(String, ForeignKey("event_clusters.id"), nullable=False)
+    agreed_facts_json: Mapped[str] = mapped_column(Text, default="[]")
+    disputed_claims_json: Mapped[str] = mapped_column(Text, default="[]")
+    unknowns_json: Mapped[str] = mapped_column(Text, default="[]")
+    confidence_rationale: Mapped[str] = mapped_column(Text, default="")
+    confidence_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class SummaryCitation(Base):
+    __tablename__ = "summary_citations"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    summary_id: Mapped[str] = mapped_column(String, ForeignKey("summaries.id"), nullable=False)
+    section: Mapped[str] = mapped_column(String, nullable=False)
+    bullet_index: Mapped[int] = mapped_column(Integer, nullable=False)
+    claim_id: Mapped[str] = mapped_column(String, ForeignKey("claims.id"), nullable=False)
+    evidence_id: Mapped[str | None] = mapped_column(String, ForeignKey("claim_evidence.id"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
