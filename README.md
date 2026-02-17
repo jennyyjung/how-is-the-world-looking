@@ -1,6 +1,6 @@
 # How Is The World Looking
 
-Aspiring to be a no-BS way of catching up with news, because the world is too noisy. MVP - **tech professionals** who want a neutral, no-fluff view of the latest **technology and GenAI** developments.
+An MVP news intelligence tool for **tech professionals** who want a neutral, no-fluff view of the latest **technology and GenAI** developments.
 
 ## Product goal (current scope)
 Given multiple reports about the same tech/genAI event, produce concise factual briefs with source-linked evidence, explicit disagreements, and stated uncertainty.
@@ -31,6 +31,7 @@ Content cleaner (MVP):
 - `docs/first-week-build-plan.md`: implementation sequence for week one and concrete testable MVP gates.
 - `docs/tech-genai-mvp-next-steps.md`: missing components and week-two plan to ship a testable MVP.
 - `docs/prompts/factual-claim-templates.md`: extraction/summarization prompts and template injections.
+- `docs/cluster-interface.md`: cluster service contract, payload schema, and response shape.
 
 ## Project layout
 - `backend/`: initial FastAPI service and persistence scaffolding.
@@ -49,6 +50,7 @@ Useful endpoints:
 - `GET /sources`
 - `POST /ingest/run`
 - `POST /extract/claims`
+- `POST /clusters/build`
 
 Run tests:
 ```bash

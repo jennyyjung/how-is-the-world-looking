@@ -14,7 +14,6 @@ from app.services.article_service import ArticleService
 
 @dataclass
 class NormalizedArticle:
-    source_key: str
     source_name: str
     source_type: str
     url: str
@@ -24,7 +23,6 @@ class NormalizedArticle:
 
 
 class SourceAdapter(Protocol):
-    source_key: str
 
     def fetch_items(self, limit: int) -> list[NormalizedArticle]:
         ...
@@ -47,7 +45,6 @@ class HackerNewsAdapter:
                     published = datetime.fromtimestamp(payload["time"], tz=timezone.utc)
                 items.append(
                     NormalizedArticle(
-                        source_key=self.source_key,
                         source_name=SOURCE_REGISTRY[self.source_key].name,
                         source_type=SOURCE_REGISTRY[self.source_key].source_type,
                         url=payload["url"],
@@ -90,7 +87,6 @@ class GitHubTrendingStarsAdapter:
                     published = datetime.fromisoformat(repo["created_at"].replace("Z", "+00:00"))
                 items.append(
                     NormalizedArticle(
-                        source_key=self.source_key,
                         source_name=SOURCE_REGISTRY[self.source_key].name,
                         source_type=SOURCE_REGISTRY[self.source_key].source_type,
                         url=repo["html_url"],
@@ -131,7 +127,6 @@ class GoogleNewsAPIAdapter:
                 raw_text = article.get("description") or article.get("content")
                 items.append(
                     NormalizedArticle(
-                        source_key=self.source_key,
                         source_name=SOURCE_REGISTRY[self.source_key].name,
                         source_type=SOURCE_REGISTRY[self.source_key].source_type,
                         url=article["url"],

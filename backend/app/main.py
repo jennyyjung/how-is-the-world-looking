@@ -10,6 +10,7 @@ from app.ingestion import IngestionRunner
 from app.services.article_service import ArticleService
 from app.services.claim_extraction import parse_claim_extraction_json
 from app.services.claim_service import ClaimService
+from app.services.cluster_service import ClusterService
 
 Base.metadata.create_all(bind=engine)
 
@@ -17,6 +18,7 @@ app = FastAPI(title="How Is The World Looking API")
 ingestion_runner = IngestionRunner()
 article_service = ArticleService()
 claim_service = ClaimService()
+cluster_service = ClusterService()
 
 
 @app.get("/health", response_model=schemas.HealthResponse)
@@ -76,4 +78,18 @@ def extract_claims(
     return schemas.ClaimExtractionRunResponse(
         claims_created=persist_result.claims_created,
         evidence_created=persist_result.evidence_created,
+    )
+
+
+@app.post("/clusters/build", response_model=schemas.ClusterBuildResponse)
+def build_clusters(payload: schemas.ClusterBuildRequest, db: Session = Depends(get_db)) -> schemas.ClusterBuildResponse:
+    result = cluster_service.build_clusters(
+        db,
+        lookback_hours=payload.lookback_hours,
+        similarity_threshold=payload.similarity_threshold,
+    )
+    return schemas.ClusterBuildResponse(
+        clusters_created=result.clusters_created,
+        claims_clustered=result.claims_clustered,
+        claims_scanned=result.claims_scanned,
     )
