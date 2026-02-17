@@ -98,3 +98,68 @@ def test_summary_build_enforces_citations():
         assert len(citations) >= len(agreed)
     finally:
         db.close()
+
+
+def test_relation_builder_prioritizes_contradiction_over_overlap():
+    Base.metadata.create_all(bind=engine)
+    db = SessionLocal()
+    try:
+        article_service = ArticleService()
+        claim_service = ClaimService()
+        cluster_service = ClusterService()
+        summary_service = SummaryService()
+
+        a1 = article_service.create_article_from_raw(
+            db,
+            source_name="S3",
+            source_type="api",
+            url="https://example.com/s3",
+            title="Chip production rising",
+            raw_text="Company says chip production increased this quarter.",
+        )
+        a2 = article_service.create_article_from_raw(
+            db,
+            source_name="S4",
+            source_type="api",
+            url="https://example.com/s4",
+            title="Chip production not rising",
+            raw_text="Company says chip production did not increase this quarter.",
+        )
+
+        outputs = [
+            {
+                "claim_text": "Company says chip production increased this quarter.",
+                "claim_type": "observed_fact",
+                "evidence": [
+                    {
+                        "evidence_text": "Company says chip production increased this quarter.",
+                        "evidence_type": "reported_fact",
+                    }
+                ],
+            },
+            {
+                "claim_text": "Company says chip production did not increase this quarter.",
+                "claim_type": "observed_fact",
+                "evidence": [
+                    {
+                        "evidence_text": "Company says chip production did not increase this quarter.",
+                        "evidence_type": "reported_fact",
+                    }
+                ],
+            },
+        ]
+
+        for article_id, claim_payload in zip([a1.article_id, a2.article_id], outputs):
+            article = db.query(models.Article).filter(models.Article.id == article_id).first()
+            parsed = parse_claim_extraction_json(json.dumps({"claims": [claim_payload]}))
+            claim_service.persist_extracted_claims(db, article=article, extraction_result=parsed)
+
+        cluster_service.build_clusters(db, lookback_hours=720, similarity_threshold=0.3)
+        summary_service.build_summaries(db)
+
+        relations = db.query(models.ClaimRelation).all()
+        assert relations
+        assert any(rel.relation_type == "contradicts" for rel in relations)
+        assert not any(rel.relation_type == "supports" for rel in relations)
+    finally:
+        db.close()

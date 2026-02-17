@@ -95,10 +95,12 @@ class SummaryService:
                 right_tokens = self.cluster_helper._tokens(right.claim_text)
                 score = self.cluster_helper._jaccard(left_tokens, right_tokens)
                 relation_type = None
-                if score >= 0.6:
-                    relation_type = "supports"
-                elif score >= 0.35 and self._is_negation_mismatch(left.claim_text, right.claim_text):
+                # Check contradiction first to avoid classifying strong lexical overlap
+                # negation pairs as supports.
+                if score >= 0.35 and self._is_negation_mismatch(left.claim_text, right.claim_text):
                     relation_type = "contradicts"
+                elif score >= 0.6:
+                    relation_type = "supports"
                 if relation_type is None:
                     continue
                 db.add(
