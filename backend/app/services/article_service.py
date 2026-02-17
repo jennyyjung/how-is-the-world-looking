@@ -42,7 +42,8 @@ class ArticleService:
         published_at: datetime | None = None,
     ) -> ArticleUpsertResult:
         cleaned = self.cleaner.clean_for_keywords(raw_text or title)
-        existing = db.query(models.Article).filter(models.Article.content_hash == cleaned.content_hash).first()
+        dedupe_hash = cleaned.content_hash
+        existing = db.query(models.Article).filter(models.Article.content_hash == dedupe_hash).first()
         if existing:
             return ArticleUpsertResult(article_id=existing.id, deduped=True)
 
@@ -52,7 +53,7 @@ class ArticleService:
             url=url,
             title=title,
             cleaned_text=cleaned.cleaned_text,
-            content_hash=cleaned.content_hash,
+            content_hash=dedupe_hash,
             published_at=published_at,
         )
         db.add(article)
