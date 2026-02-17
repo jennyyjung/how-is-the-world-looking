@@ -23,6 +23,7 @@ BOILERPLATE_WORDS = {
 @dataclass
 class CleanedContent:
     cleaned_text: str
+    keyword_text: str
     content_hash: str
 
 
@@ -32,9 +33,17 @@ class ContentCleaner:
 
     def clean_for_keywords(self, text: str | None) -> CleanedContent:
         if not text:
-            return CleanedContent(cleaned_text="", content_hash=self.hash_text(""))
+            return CleanedContent(cleaned_text="", keyword_text="", content_hash=self.hash_text(""))
 
         normalized = self._normalize(text)
+        keyword_text = self._build_keyword_text(normalized)
+        return CleanedContent(
+            cleaned_text=normalized,
+            keyword_text=keyword_text,
+            content_hash=self.hash_text(keyword_text),
+        )
+
+    def _build_keyword_text(self, normalized: str) -> str:
         tokens = self._tokenize(normalized)
         filtered_tokens = [
             token
@@ -44,8 +53,7 @@ class ContentCleaner:
         counts = Counter(filtered_tokens)
         ranked = sorted(counts.items(), key=lambda item: (-item[1], item[0]))
         keywords = [token for token, _ in ranked[: self.keyword_limit]]
-        cleaned_text = " ".join(keywords)
-        return CleanedContent(cleaned_text=cleaned_text, content_hash=self.hash_text(cleaned_text))
+        return " ".join(keywords)
 
     @staticmethod
     def hash_text(text: str) -> str:
