@@ -157,7 +157,17 @@ def test_relation_builder_prioritizes_contradiction_over_overlap():
         cluster_service.build_clusters(db, lookback_hours=720, similarity_threshold=0.3)
         summary_service.build_summaries(db)
 
-        relations = db.query(models.ClaimRelation).all()
+        article_ids = [a1.article_id, a2.article_id]
+        claim_ids = [
+            row[0]
+            for row in db.query(models.Claim.id).filter(models.Claim.article_id.in_(article_ids)).all()
+        ]
+        relations = (
+            db.query(models.ClaimRelation)
+            .filter(models.ClaimRelation.left_claim_id.in_(claim_ids))
+            .filter(models.ClaimRelation.right_claim_id.in_(claim_ids))
+            .all()
+        )
         assert relations
         assert any(rel.relation_type == "contradicts" for rel in relations)
         assert not any(rel.relation_type == "supports" for rel in relations)
@@ -259,5 +269,160 @@ def test_summary_ignores_opinions_and_predictions_in_mixed_claim_types():
 
         assert non_factual_claims.isdisjoint(set(agreed))
         assert non_factual_claims.isdisjoint(set(disputed))
+    finally:
+        db.close()
+
+
+def test_relation_builder_marks_conflicting_numbers_as_contradiction():
+    Base.metadata.create_all(bind=engine)
+    db = SessionLocal()
+    try:
+        article_service = ArticleService()
+        summary_service = SummaryService()
+
+        article_a = article_service.create_article_from_raw(
+            db,
+            source_name="S7",
+            source_type="api",
+            url="https://example.com/s7",
+            title="Factory output claim A",
+            raw_text="Company says factory output increased by 40% this quarter.",
+        )
+        article_b = article_service.create_article_from_raw(
+            db,
+            source_name="S8",
+            source_type="api",
+            url="https://example.com/s8",
+            title="Factory output claim B",
+            raw_text="Company says factory output increased by 25% this quarter.",
+        )
+
+        claim_a = models.Claim(
+            article_id=article_a.article_id,
+            claim_text="Company says factory output increased by 40% this quarter.",
+            claim_type="observed_fact",
+        )
+        claim_b = models.Claim(
+            article_id=article_b.article_id,
+            claim_text="Company says factory output increased by 25% this quarter.",
+            claim_type="observed_fact",
+        )
+        db.add_all([claim_a, claim_b])
+        db.flush()
+
+        created = summary_service._build_relations(db, [claim_a, claim_b])
+
+        relations = (
+            db.query(models.ClaimRelation)
+            .filter(models.ClaimRelation.left_claim_id.in_([claim_a.id, claim_b.id]))
+            .filter(models.ClaimRelation.right_claim_id.in_([claim_a.id, claim_b.id]))
+            .all()
+        )
+        assert created == 1
+        assert relations
+        assert relations[0].relation_type == "contradicts"
+    finally:
+        db.close()
+
+
+def test_relation_builder_marks_paraphrases_as_supports():
+    Base.metadata.create_all(bind=engine)
+    db = SessionLocal()
+    try:
+        article_service = ArticleService()
+        summary_service = SummaryService()
+
+        article_a = article_service.create_article_from_raw(
+            db,
+            source_name="S9",
+            source_type="api",
+            url="https://example.com/s9",
+            title="Transit disruption headline A",
+            raw_text="City officials confirmed the subway line reopened today.",
+        )
+        article_b = article_service.create_article_from_raw(
+            db,
+            source_name="S10",
+            source_type="api",
+            url="https://example.com/s10",
+            title="Transit disruption headline B",
+            raw_text="Officials said the city subway line reopened today.",
+        )
+
+        claim_a = models.Claim(
+            article_id=article_a.article_id,
+            claim_text="City officials confirmed the subway line reopened today.",
+            claim_type="observed_fact",
+        )
+        claim_b = models.Claim(
+            article_id=article_b.article_id,
+            claim_text="Officials said the city subway line reopened today.",
+            claim_type="observed_fact",
+        )
+        db.add_all([claim_a, claim_b])
+        db.flush()
+
+        created = summary_service._build_relations(db, [claim_a, claim_b])
+
+        relations = (
+            db.query(models.ClaimRelation)
+            .filter(models.ClaimRelation.left_claim_id.in_([claim_a.id, claim_b.id]))
+            .filter(models.ClaimRelation.right_claim_id.in_([claim_a.id, claim_b.id]))
+            .all()
+        )
+        assert created == 1
+        assert relations
+        assert relations[0].relation_type == "supports"
+    finally:
+        db.close()
+
+
+def test_relation_builder_skips_low_overlap_unrelated_claims():
+    Base.metadata.create_all(bind=engine)
+    db = SessionLocal()
+    try:
+        article_service = ArticleService()
+        summary_service = SummaryService()
+
+        article_a = article_service.create_article_from_raw(
+            db,
+            source_name="S11",
+            source_type="api",
+            url="https://example.com/s11",
+            title="Mars mission update",
+            raw_text="The rover captured mineral samples on Mars.",
+        )
+        article_b = article_service.create_article_from_raw(
+            db,
+            source_name="S12",
+            source_type="api",
+            url="https://example.com/s12",
+            title="Market update",
+            raw_text="Coffee prices dropped in European markets.",
+        )
+
+        claim_a = models.Claim(
+            article_id=article_a.article_id,
+            claim_text="The rover captured mineral samples on Mars.",
+            claim_type="observed_fact",
+        )
+        claim_b = models.Claim(
+            article_id=article_b.article_id,
+            claim_text="Coffee prices dropped in European markets.",
+            claim_type="observed_fact",
+        )
+        db.add_all([claim_a, claim_b])
+        db.flush()
+
+        created = summary_service._build_relations(db, [claim_a, claim_b])
+
+        relations = (
+            db.query(models.ClaimRelation)
+            .filter(models.ClaimRelation.left_claim_id.in_([claim_a.id, claim_b.id]))
+            .filter(models.ClaimRelation.right_claim_id.in_([claim_a.id, claim_b.id]))
+            .all()
+        )
+        assert created == 0
+        assert not relations
     finally:
         db.close()
