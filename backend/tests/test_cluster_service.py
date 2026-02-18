@@ -210,6 +210,43 @@ def test_relation_builder_prioritizes_contradiction_over_overlap():
         assert relations
         assert any(rel.relation_type == "contradicts" for rel in relations)
         assert not any(rel.relation_type == "supports" for rel in relations)
+
+        cluster_id = (
+            db.query(models.Claim.event_cluster_id)
+            .filter(models.Claim.id == claim_ids[0])
+            .scalar()
+        )
+        latest_summary = (
+            db.query(models.Summary)
+            .filter(models.Summary.event_cluster_id == cluster_id)
+            .order_by(models.Summary.created_at.desc())
+            .first()
+        )
+        assert latest_summary is not None
+        disputed = json.loads(latest_summary.disputed_claims_json)
+        assert disputed
+        assert " <> " in disputed[0]
+        assert "increased this quarter" in disputed[0]
+        assert "did not increase this quarter" in disputed[0]
+
+        assert "across 2 sources" in latest_summary.confidence_rationale
+        assert "contradicts=1" in latest_summary.confidence_rationale
+
+        latest_events = summary_service.get_latest_events(db, limit=20)
+        event = next((item for item in latest_events if item["cluster_id"] == cluster_id), None)
+        assert event is not None
+        assert set(event.keys()) == {
+            "cluster_id",
+            "cluster_title",
+            "agreed_facts",
+            "disputed_claims",
+            "unknowns",
+            "confidence_rationale",
+            "confidence_score",
+            "source_links",
+        }
+        assert event["disputed_claims"] == disputed
+        assert len(event["source_links"]) == 2
     finally:
         db.close()
 
