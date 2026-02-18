@@ -6,7 +6,7 @@ from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from app import models
-from app.services.claim_extraction import ClaimExtractionResult
+from app.services.claim_extraction import ClaimExtractionResult, is_factual_claim_type
 
 
 @dataclass
@@ -46,6 +46,8 @@ class ClaimService:
         created_claims = 0
         created_evidence = 0
         for extracted in extraction_result.claims:
+            if not is_factual_claim_type(extracted.claim_type):
+                continue
             claim = models.Claim(
                 article_id=article.id,
                 claim_text=extracted.claim_text,

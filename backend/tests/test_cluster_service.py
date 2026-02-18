@@ -163,3 +163,101 @@ def test_relation_builder_prioritizes_contradiction_over_overlap():
         assert not any(rel.relation_type == "supports" for rel in relations)
     finally:
         db.close()
+
+
+def test_summary_ignores_opinions_and_predictions_in_mixed_claim_types():
+    Base.metadata.create_all(bind=engine)
+    db = SessionLocal()
+    try:
+        article_service = ArticleService()
+        claim_service = ClaimService()
+        cluster_service = ClusterService()
+        summary_service = SummaryService()
+
+        article_a = article_service.create_article_from_raw(
+            db,
+            source_name="S5",
+            source_type="api",
+            url="https://example.com/s5",
+            title="Bridge closure confirmed",
+            raw_text="Officials confirmed the bridge was closed."
+        )
+        article_b = article_service.create_article_from_raw(
+            db,
+            source_name="S6",
+            source_type="api",
+            url="https://example.com/s6",
+            title="Bridge closure denied",
+            raw_text="Officials said the bridge was not closed."
+        )
+
+        claims_by_article = {
+            article_a.article_id: [
+                {
+                    "claim_text": "Officials confirmed the bridge was closed after inspection.",
+                    "claim_type": "observed_fact",
+                    "evidence": [
+                        {
+                            "evidence_text": "Officials confirmed the bridge was closed after inspection.",
+                            "evidence_type": "reported_fact",
+                        }
+                    ],
+                },
+                {
+                    "claim_text": "Residents believe this closure will last for months.",
+                    "claim_type": "opinion",
+                    "evidence": [
+                        {
+                            "evidence_text": "Residents believe this closure will last for months.",
+                            "evidence_type": "reported_fact",
+                        }
+                    ],
+                },
+            ],
+            article_b.article_id: [
+                {
+                    "claim_text": "Officials confirmed the bridge was not closed after inspection.",
+                    "claim_type": "attributed_statement",
+                    "evidence": [
+                        {
+                            "evidence_text": "Officials confirmed the bridge was not closed after inspection.",
+                            "evidence_type": "reported_fact",
+                        }
+                    ],
+                },
+                {
+                    "claim_text": "Forecasters predict closures could spread next month.",
+                    "claim_type": "prediction",
+                    "evidence": [
+                        {
+                            "evidence_text": "Forecasters predict closures could spread next month.",
+                            "evidence_type": "reported_fact",
+                        }
+                    ],
+                },
+            ],
+        }
+
+        for article_id, claim_payloads in claims_by_article.items():
+            article = db.query(models.Article).filter(models.Article.id == article_id).first()
+            parsed = parse_claim_extraction_json(json.dumps({"claims": claim_payloads}))
+            claim_service.persist_extracted_claims(db, article=article, extraction_result=parsed)
+
+        cluster_service.build_clusters(db, lookback_hours=720, similarity_threshold=0.3)
+        summary_service.build_summaries(db)
+
+        latest_summary = db.query(models.Summary).order_by(models.Summary.created_at.desc()).first()
+        assert latest_summary is not None
+
+        agreed = json.loads(latest_summary.agreed_facts_json)
+        disputed = json.loads(latest_summary.disputed_claims_json)
+
+        non_factual_claims = {
+            "Residents believe this closure will last for months.",
+            "Forecasters predict closures could spread next month.",
+        }
+
+        assert non_factual_claims.isdisjoint(set(agreed))
+        assert non_factual_claims.isdisjoint(set(disputed))
+    finally:
+        db.close()
