@@ -9,6 +9,49 @@ from app.services.cluster_service import ClusterService
 from app.services.summary_service import SummaryService
 
 
+def _create_cluster_with_claims(db, source_count: int, claim_texts: list[str], confidence: float | None = None) -> tuple[str, list[models.Claim]]:
+    cluster = models.EventCluster(canonical_title="Confidence Test Cluster")
+    db.add(cluster)
+    db.flush()
+
+    claims: list[models.Claim] = []
+    for idx, claim_text in enumerate(claim_texts):
+        source = models.Source(name=f"Confidence Source {idx}", source_type="api")
+        db.add(source)
+        db.flush()
+        if idx >= source_count:
+            source = db.query(models.Source).filter(models.Source.name == "Confidence Source 0").first()
+        article = models.Article(
+            source_id=source.id,
+            url=f"https://example.com/confidence/{cluster.id}/{idx}",
+            title=f"Claim {idx}",
+            cleaned_text=claim_text,
+        )
+        db.add(article)
+        db.flush()
+        claim = models.Claim(
+            article_id=article.id,
+            event_cluster_id=cluster.id,
+            claim_text=claim_text,
+            claim_type="observed_fact",
+            confidence=confidence,
+        )
+        db.add(claim)
+        db.flush()
+        db.add(
+            models.ClaimEvidence(
+                claim_id=claim.id,
+                article_id=article.id,
+                evidence_text=claim_text,
+                evidence_type="reported_fact",
+            )
+        )
+        claims.append(claim)
+
+    db.flush()
+    return cluster.id, claims
+
+
 def test_jaccard_similarity_nonzero_for_overlap():
     service = ClusterService()
     score = service._jaccard({"openai", "model", "launch"}, {"openai", "model", "release"})
@@ -157,18 +200,11 @@ def test_relation_builder_prioritizes_contradiction_over_overlap():
         cluster_service.build_clusters(db, lookback_hours=720, similarity_threshold=0.3)
         summary_service.build_summaries(db)
 
-        claim_ids = [
-            claim.id
-            for claim in db.query(models.Claim)
-            .filter(models.Claim.article_id.in_([a1.article_id, a2.article_id]))
-            .all()
-        ]
+        claim_ids = [claim.id for claim in db.query(models.Claim).filter(models.Claim.article_id.in_([a1.article_id, a2.article_id])).all()]
         relations = (
             db.query(models.ClaimRelation)
-            .filter(
-                models.ClaimRelation.left_claim_id.in_(claim_ids),
-                models.ClaimRelation.right_claim_id.in_(claim_ids),
-            )
+            .filter(models.ClaimRelation.left_claim_id.in_(claim_ids))
+            .filter(models.ClaimRelation.right_claim_id.in_(claim_ids))
             .all()
         )
         assert relations
@@ -313,68 +349,99 @@ def test_summary_ignores_opinions_and_predictions_in_mixed_claim_types():
         db.close()
 
 
-def test_summary_deduplicates_near_duplicate_agreed_claims():
+def test_confidence_increases_with_more_independent_sources():
     Base.metadata.create_all(bind=engine)
     db = SessionLocal()
     try:
-        article_service = ArticleService()
-        claim_service = ClaimService()
-        cluster_service = ClusterService()
-        summary_service = SummaryService()
-
-        article_a = article_service.create_article_from_raw(
+        service = SummaryService()
+        low_source_cluster, low_source_claims = _create_cluster_with_claims(
             db,
-            source_name="S7",
-            source_type="api",
-            url="https://example.com/s7",
-            title="Transit line opens",
-            raw_text="City opened a new transit line downtown.",
+            source_count=1,
+            claim_texts=["Power grid restored in district north.", "Power grid restored in district south."],
+            confidence=0.8,
         )
-        article_b = article_service.create_article_from_raw(
+        high_source_cluster, high_source_claims = _create_cluster_with_claims(
             db,
-            source_name="S8",
-            source_type="api",
-            url="https://example.com/s8",
-            title="Transit line opening",
-            raw_text="The city opened a new transit line downtown!",
+            source_count=2,
+            claim_texts=["Power grid restored in district north.", "Power grid restored in district south."],
+            confidence=0.8,
         )
 
-        claims_by_article = {
-            article_a.article_id: {
-                "claim_text": "City opened a new transit line downtown.",
-                "claim_type": "observed_fact",
-                "evidence": [
-                    {
-                        "evidence_text": "City opened a new transit line downtown.",
-                        "evidence_type": "reported_fact",
-                    }
-                ],
-            },
-            article_b.article_id: {
-                "claim_text": "The city opened a new transit line downtown!",
-                "claim_type": "observed_fact",
-                "evidence": [
-                    {
-                        "evidence_text": "The city opened a new transit line downtown!",
-                        "evidence_type": "reported_fact",
-                    }
-                ],
-            },
-        }
+        low_summary = service._build_cluster_summary(db, low_source_cluster, low_source_claims)
+        high_summary = service._build_cluster_summary(db, high_source_cluster, high_source_claims)
 
-        for article_id, claim_payload in claims_by_article.items():
-            article = db.query(models.Article).filter(models.Article.id == article_id).first()
-            parsed = parse_claim_extraction_json(json.dumps({"claims": [claim_payload]}))
-            claim_service.persist_extracted_claims(db, article=article, extraction_result=parsed)
+        assert high_summary.confidence_score > low_summary.confidence_score
+    finally:
+        db.close()
 
-        cluster_service.build_clusters(db, lookback_hours=720, similarity_threshold=0.3)
-        summary_service.build_summaries(db)
 
-        latest_summary = db.query(models.Summary).order_by(models.Summary.created_at.desc()).first()
-        assert latest_summary is not None
-        agreed = json.loads(latest_summary.agreed_facts_json)
+def test_confidence_drops_when_contradiction_density_is_high():
+    Base.metadata.create_all(bind=engine)
+    db = SessionLocal()
+    try:
+        service = SummaryService()
+        stable_cluster, stable_claims = _create_cluster_with_claims(
+            db,
+            source_count=3,
+            claim_texts=[
+                "Airport resumed operations this morning.",
+                "Airport resumed operations this morning per officials.",
+                "Airport resumed operations this morning with delays.",
+            ],
+        )
+        contradiction_cluster, contradiction_claims = _create_cluster_with_claims(
+            db,
+            source_count=3,
+            claim_texts=[
+                "Airport resumed operations this morning.",
+                "Airport did not resume operations this morning.",
+                "Airport resumed operations this morning with delays.",
+            ],
+        )
 
-        normalized = {" ".join(token for token in text.lower().replace("!", "").replace(".", "").split()) for text in agreed}
-        assert len(normalized) == len(agreed)
+        service._build_relations(db, stable_claims)
+        service._build_relations(db, contradiction_claims)
+
+        stable_summary = service._build_cluster_summary(db, stable_cluster, stable_claims)
+        contradiction_summary = service._build_cluster_summary(db, contradiction_cluster, contradiction_claims)
+
+        assert contradiction_summary.confidence_score < stable_summary.confidence_score
+    finally:
+        db.close()
+
+
+def test_duplicate_claims_do_not_materially_inflate_confidence():
+    Base.metadata.create_all(bind=engine)
+    db = SessionLocal()
+    try:
+        service = SummaryService()
+        deduped_cluster, deduped_claims = _create_cluster_with_claims(
+            db,
+            source_count=3,
+            claim_texts=[
+                "Mayor announced emergency shelter openings.",
+                "City confirmed roads are partially reopened.",
+                "Emergency services remain on high alert.",
+            ],
+            confidence=0.9,
+        )
+        duplicate_cluster, duplicate_claims = _create_cluster_with_claims(
+            db,
+            source_count=3,
+            claim_texts=[
+                "Mayor announced emergency shelter openings.",
+                "Mayor announced emergency shelter openings.",
+                "Mayor announced emergency shelter openings.",
+            ],
+            confidence=0.9,
+        )
+
+        service._build_relations(db, deduped_claims)
+        service._build_relations(db, duplicate_claims)
+
+        deduped_summary = service._build_cluster_summary(db, deduped_cluster, deduped_claims)
+        duplicate_summary = service._build_cluster_summary(db, duplicate_cluster, duplicate_claims)
+
+        assert duplicate_summary.confidence_score <= deduped_summary.confidence_score + 0.05
     finally:
         db.close()

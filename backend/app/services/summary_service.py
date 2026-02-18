@@ -198,14 +198,32 @@ class SummaryService:
             if left and right:
                 disputed.append(self._format_disputed_pair(left.claim_text, right.claim_text))
 
-        factual_ids = {claim.id for claim in factual_claims}
-        source_ids = {
-            context["source_id"]
-            for claim_id, context in claim_context.items()
-            if claim_id in factual_ids
-        }
+        source_ids = set()
+        for claim in factual_claims:
+            article = db.query(models.Article).filter(models.Article.id == claim.article_id).first()
+            if article is not None:
+                source_ids.add(article.source_id)
+
+        total_factual = len(factual_claims)
+        unique_claim_count = len({self._normalize_claim_text(claim.claim_text) for claim in factual_claims})
+        source_ratio = min(1.0, len(source_ids) / max(total_factual, 1))
+        unique_claim_ratio = min(1.0, unique_claim_count / max(total_factual, 1))
+        support_contradiction_ratio = (len(supports) + 1) / (len(supports) + len(contradicts) + 2)
+
+        normalized_factors = [source_ratio, unique_claim_ratio, support_contradiction_ratio]
+        base_confidence = sum(normalized_factors) / len(normalized_factors)
+
+        claim_confidences = [claim.confidence for claim in factual_claims if claim.confidence is not None]
+        has_claim_confidence = bool(claim_confidences)
+        if has_claim_confidence:
+            mean_claim_confidence = sum(claim_confidences) / len(claim_confidences)
+            confidence = (0.75 * base_confidence) + (0.25 * mean_claim_confidence)
+        else:
+            mean_claim_confidence = None
+            confidence = base_confidence
+
+        confidence = min(1.0, max(0.0, confidence))
         unknowns = []
-        confidence = min(1.0, 0.35 + (0.1 * len(support_ids)) + (0.1 * len(source_ids)) - (0.1 * len(disputed)))
 
         summary = models.Summary(
             event_cluster_id=cluster_id,
@@ -213,14 +231,25 @@ class SummaryService:
             disputed_claims_json=json.dumps(disputed),
             unknowns_json=json.dumps(unknowns),
             confidence_rationale=(
-                f"Derived from {len(factual_claims)} factual claims across {len(source_ids)} sources; "
-                f"supports={len(supports)}, contradicts={len(contradicts)}."
+                f"Derived from {total_factual} factual claims across {len(source_ids)} sources; "
+                f"source_ratio={source_ratio:.2f}, unique_claim_ratio={unique_claim_ratio:.2f}, "
+                f"support_contradiction_ratio={support_contradiction_ratio:.2f}, "
+                f"supports={len(supports)}, contradicts={len(contradicts)}"
+                + (
+                    f", mean_claim_confidence={mean_claim_confidence:.2f}."
+                    if has_claim_confidence
+                    else "."
+                )
             ),
-            confidence_score=round(max(confidence, 0.05), 3),
+            confidence_score=round(confidence, 3),
         )
         db.add(summary)
         db.flush()
         return summary
+
+    @staticmethod
+    def _normalize_claim_text(text: str) -> str:
+        return re.sub(r"\s+", " ", text.strip().lower())
 
     def _persist_citations(
         self,
