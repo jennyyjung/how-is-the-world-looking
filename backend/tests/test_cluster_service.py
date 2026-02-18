@@ -9,6 +9,49 @@ from app.services.cluster_service import ClusterService
 from app.services.summary_service import SummaryService
 
 
+def _create_cluster_with_claims(db, source_count: int, claim_texts: list[str], confidence: float | None = None) -> tuple[str, list[models.Claim]]:
+    cluster = models.EventCluster(canonical_title="Confidence Test Cluster")
+    db.add(cluster)
+    db.flush()
+
+    claims: list[models.Claim] = []
+    for idx, claim_text in enumerate(claim_texts):
+        source = models.Source(name=f"Confidence Source {idx}", source_type="api")
+        db.add(source)
+        db.flush()
+        if idx >= source_count:
+            source = db.query(models.Source).filter(models.Source.name == "Confidence Source 0").first()
+        article = models.Article(
+            source_id=source.id,
+            url=f"https://example.com/confidence/{cluster.id}/{idx}",
+            title=f"Claim {idx}",
+            cleaned_text=claim_text,
+        )
+        db.add(article)
+        db.flush()
+        claim = models.Claim(
+            article_id=article.id,
+            event_cluster_id=cluster.id,
+            claim_text=claim_text,
+            claim_type="observed_fact",
+            confidence=confidence,
+        )
+        db.add(claim)
+        db.flush()
+        db.add(
+            models.ClaimEvidence(
+                claim_id=claim.id,
+                article_id=article.id,
+                evidence_text=claim_text,
+                evidence_type="reported_fact",
+            )
+        )
+        claims.append(claim)
+
+    db.flush()
+    return cluster.id, claims
+
+
 def test_jaccard_similarity_nonzero_for_overlap():
     service = ClusterService()
     score = service._jaccard({"openai", "model", "launch"}, {"openai", "model", "release"})
@@ -171,6 +214,43 @@ def test_relation_builder_prioritizes_contradiction_over_overlap():
         assert relations
         assert any(rel.relation_type == "contradicts" for rel in relations)
         assert not any(rel.relation_type == "supports" for rel in relations)
+
+        cluster_id = (
+            db.query(models.Claim.event_cluster_id)
+            .filter(models.Claim.id == claim_ids[0])
+            .scalar()
+        )
+        latest_summary = (
+            db.query(models.Summary)
+            .filter(models.Summary.event_cluster_id == cluster_id)
+            .order_by(models.Summary.created_at.desc())
+            .first()
+        )
+        assert latest_summary is not None
+        disputed = json.loads(latest_summary.disputed_claims_json)
+        assert disputed
+        assert " <> " in disputed[0]
+        assert "increased this quarter" in disputed[0]
+        assert "did not increase this quarter" in disputed[0]
+
+        assert "across 2 sources" in latest_summary.confidence_rationale
+        assert "contradicts=1" in latest_summary.confidence_rationale
+
+        latest_events = summary_service.get_latest_events(db, limit=20)
+        event = next((item for item in latest_events if item["cluster_id"] == cluster_id), None)
+        assert event is not None
+        assert set(event.keys()) == {
+            "cluster_id",
+            "cluster_title",
+            "agreed_facts",
+            "disputed_claims",
+            "unknowns",
+            "confidence_rationale",
+            "confidence_score",
+            "source_links",
+        }
+        assert event["disputed_claims"] == disputed
+        assert len(event["source_links"]) == 2
     finally:
         db.close()
 
