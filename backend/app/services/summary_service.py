@@ -8,6 +8,7 @@ from sqlalchemy import and_, or_
 from sqlalchemy.orm import Session
 
 from app import models
+from app.services.claim_extraction import is_factual_claim_type
 from app.services.cluster_service import ClusterService
 
 
@@ -78,7 +79,11 @@ class SummaryService:
         return events
 
     def _build_relations(self, db: Session, claims: list[models.Claim]) -> int:
-        claim_ids = [claim.id for claim in claims]
+        factual_claims = [claim for claim in claims if is_factual_claim_type(claim.claim_type)]
+        if len(factual_claims) < 2:
+            return 0
+
+        claim_ids = [claim.id for claim in factual_claims]
         existing = (
             db.query(models.ClaimRelation)
             .filter(or_(models.ClaimRelation.left_claim_id.in_(claim_ids), models.ClaimRelation.right_claim_id.in_(claim_ids)))
@@ -89,9 +94,9 @@ class SummaryService:
         db.flush()
 
         created = 0
-        for idx, left in enumerate(claims):
+        for idx, left in enumerate(factual_claims):
             left_tokens = self.cluster_helper._tokens(left.claim_text)
-            for right in claims[idx + 1 :]:
+            for right in factual_claims[idx + 1 :]:
                 right_tokens = self.cluster_helper._tokens(right.claim_text)
                 score = self.cluster_helper._jaccard(left_tokens, right_tokens)
                 relation_type = None
@@ -125,13 +130,17 @@ class SummaryService:
         )
 
     def _build_cluster_summary(self, db: Session, cluster_id: str, claims: list[models.Claim]) -> models.Summary:
+        factual_claims = [claim for claim in claims if is_factual_claim_type(claim.claim_type)]
+        if not factual_claims:
+            raise ValueError(f"Cluster {cluster_id} has no factual claims available for summary generation")
+
         supports = (
             db.query(models.ClaimRelation)
             .filter(models.ClaimRelation.relation_type == "supports")
             .filter(
                 and_(
-                    models.ClaimRelation.left_claim_id.in_([c.id for c in claims]),
-                    models.ClaimRelation.right_claim_id.in_([c.id for c in claims]),
+                    models.ClaimRelation.left_claim_id.in_([c.id for c in factual_claims]),
+                    models.ClaimRelation.right_claim_id.in_([c.id for c in factual_claims]),
                 )
             )
             .all()
@@ -141,25 +150,25 @@ class SummaryService:
             .filter(models.ClaimRelation.relation_type == "contradicts")
             .filter(
                 and_(
-                    models.ClaimRelation.left_claim_id.in_([c.id for c in claims]),
-                    models.ClaimRelation.right_claim_id.in_([c.id for c in claims]),
+                    models.ClaimRelation.left_claim_id.in_([c.id for c in factual_claims]),
+                    models.ClaimRelation.right_claim_id.in_([c.id for c in factual_claims]),
                 )
             )
             .all()
         )
 
         support_ids = {r.left_claim_id for r in supports} | {r.right_claim_id for r in supports}
-        agreed = [c.claim_text for c in claims if c.id in support_ids][:5]
-        if not agreed and claims:
-            agreed = [claims[0].claim_text]
+        agreed = [c.claim_text for c in factual_claims if c.id in support_ids][:5]
+        if not agreed:
+            agreed = [factual_claims[0].claim_text]
 
         disputed = []
         for rel in contradicts[:5]:
-            left = next((c for c in claims if c.id == rel.left_claim_id), None)
+            left = next((c for c in factual_claims if c.id == rel.left_claim_id), None)
             if left:
                 disputed.append(left.claim_text)
 
-        source_ids = {db.query(models.Article).filter(models.Article.id == c.article_id).first().source_id for c in claims}
+        source_ids = {db.query(models.Article).filter(models.Article.id == c.article_id).first().source_id for c in factual_claims}
         unknowns = []
         confidence = min(1.0, 0.35 + (0.1 * len(support_ids)) + (0.1 * len(source_ids)) - (0.1 * len(disputed)))
 
@@ -169,7 +178,7 @@ class SummaryService:
             disputed_claims_json=json.dumps(disputed),
             unknowns_json=json.dumps(unknowns),
             confidence_rationale=(
-                f"Derived from {len(claims)} claims across {len(source_ids)} sources; "
+                f"Derived from {len(factual_claims)} factual claims across {len(source_ids)} sources; "
                 f"supports={len(supports)}, contradicts={len(contradicts)}."
             ),
             confidence_score=round(max(confidence, 0.05), 3),

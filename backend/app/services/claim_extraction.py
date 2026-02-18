@@ -12,6 +12,13 @@ Return JSON only, strictly following the schema contract.
 """
 
 
+FACTUAL_CLAIM_TYPES = {"observed_fact", "attributed_statement"}
+
+
+def is_factual_claim_type(claim_type: str) -> bool:
+    return claim_type in FACTUAL_CLAIM_TYPES
+
+
 CLAIM_SCHEMA_CONTRACT = {
     "type": "object",
     "properties": {
