@@ -157,10 +157,60 @@ def test_relation_builder_prioritizes_contradiction_over_overlap():
         cluster_service.build_clusters(db, lookback_hours=720, similarity_threshold=0.3)
         summary_service.build_summaries(db)
 
-        relations = db.query(models.ClaimRelation).all()
+        claim_ids = [
+            claim.id
+            for claim in db.query(models.Claim)
+            .filter(models.Claim.article_id.in_([a1.article_id, a2.article_id]))
+            .all()
+        ]
+        relations = (
+            db.query(models.ClaimRelation)
+            .filter(
+                models.ClaimRelation.left_claim_id.in_(claim_ids),
+                models.ClaimRelation.right_claim_id.in_(claim_ids),
+            )
+            .all()
+        )
         assert relations
         assert any(rel.relation_type == "contradicts" for rel in relations)
         assert not any(rel.relation_type == "supports" for rel in relations)
+
+        cluster_id = (
+            db.query(models.Claim.event_cluster_id)
+            .filter(models.Claim.id == claim_ids[0])
+            .scalar()
+        )
+        latest_summary = (
+            db.query(models.Summary)
+            .filter(models.Summary.event_cluster_id == cluster_id)
+            .order_by(models.Summary.created_at.desc())
+            .first()
+        )
+        assert latest_summary is not None
+        disputed = json.loads(latest_summary.disputed_claims_json)
+        assert disputed
+        assert " <> " in disputed[0]
+        assert "increased this quarter" in disputed[0]
+        assert "did not increase this quarter" in disputed[0]
+
+        assert "across 2 sources" in latest_summary.confidence_rationale
+        assert "contradicts=1" in latest_summary.confidence_rationale
+
+        latest_events = summary_service.get_latest_events(db, limit=20)
+        event = next((item for item in latest_events if item["cluster_id"] == cluster_id), None)
+        assert event is not None
+        assert set(event.keys()) == {
+            "cluster_id",
+            "cluster_title",
+            "agreed_facts",
+            "disputed_claims",
+            "unknowns",
+            "confidence_rationale",
+            "confidence_score",
+            "source_links",
+        }
+        assert event["disputed_claims"] == disputed
+        assert len(event["source_links"]) == 2
     finally:
         db.close()
 
@@ -259,5 +309,72 @@ def test_summary_ignores_opinions_and_predictions_in_mixed_claim_types():
 
         assert non_factual_claims.isdisjoint(set(agreed))
         assert non_factual_claims.isdisjoint(set(disputed))
+    finally:
+        db.close()
+
+
+def test_summary_deduplicates_near_duplicate_agreed_claims():
+    Base.metadata.create_all(bind=engine)
+    db = SessionLocal()
+    try:
+        article_service = ArticleService()
+        claim_service = ClaimService()
+        cluster_service = ClusterService()
+        summary_service = SummaryService()
+
+        article_a = article_service.create_article_from_raw(
+            db,
+            source_name="S7",
+            source_type="api",
+            url="https://example.com/s7",
+            title="Transit line opens",
+            raw_text="City opened a new transit line downtown.",
+        )
+        article_b = article_service.create_article_from_raw(
+            db,
+            source_name="S8",
+            source_type="api",
+            url="https://example.com/s8",
+            title="Transit line opening",
+            raw_text="The city opened a new transit line downtown!",
+        )
+
+        claims_by_article = {
+            article_a.article_id: {
+                "claim_text": "City opened a new transit line downtown.",
+                "claim_type": "observed_fact",
+                "evidence": [
+                    {
+                        "evidence_text": "City opened a new transit line downtown.",
+                        "evidence_type": "reported_fact",
+                    }
+                ],
+            },
+            article_b.article_id: {
+                "claim_text": "The city opened a new transit line downtown!",
+                "claim_type": "observed_fact",
+                "evidence": [
+                    {
+                        "evidence_text": "The city opened a new transit line downtown!",
+                        "evidence_type": "reported_fact",
+                    }
+                ],
+            },
+        }
+
+        for article_id, claim_payload in claims_by_article.items():
+            article = db.query(models.Article).filter(models.Article.id == article_id).first()
+            parsed = parse_claim_extraction_json(json.dumps({"claims": [claim_payload]}))
+            claim_service.persist_extracted_claims(db, article=article, extraction_result=parsed)
+
+        cluster_service.build_clusters(db, lookback_hours=720, similarity_threshold=0.3)
+        summary_service.build_summaries(db)
+
+        latest_summary = db.query(models.Summary).order_by(models.Summary.created_at.desc()).first()
+        assert latest_summary is not None
+        agreed = json.loads(latest_summary.agreed_facts_json)
+
+        normalized = {" ".join(token for token in text.lower().replace("!", "").replace(".", "").split()) for text in agreed}
+        assert len(normalized) == len(agreed)
     finally:
         db.close()
