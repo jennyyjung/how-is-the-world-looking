@@ -20,6 +20,73 @@ class SummaryBuildResult:
 
 
 class SummaryService:
+    _NUMBER_PATTERN = re.compile(r"\b\d+(?:\.\d+)?%?\b")
+    _YEAR_PATTERN = re.compile(r"\b(?:19|20)\d{2}\b")
+    _DATE_PATTERN = re.compile(
+        r"\b\d{4}-\d{1,2}-\d{1,2}\b|\b\d{1,2}/\d{1,2}/\d{2,4}\b|"
+        r"\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\.?\s+\d{1,2},?\s+\d{4}\b"
+    )
+    _TEMPORAL_CONFLICT_PAIRS = [
+        ("today", "yesterday"),
+        ("today", "last year"),
+        ("this year", "last year"),
+        ("this month", "last month"),
+        ("this quarter", "last quarter"),
+        ("now", "then"),
+    ]
+    _ANTONYM_GROUPS = [
+        (
+            {"increase", "increased", "increases", "rise", "rises", "rose", "rising", "grow", "grew", "grown"},
+            {
+                "decrease",
+                "decreased",
+                "decreases",
+                "decline",
+                "declined",
+                "declines",
+                "fall",
+                "fell",
+                "fallen",
+                "drop",
+                "dropped",
+                "drops",
+                "shrink",
+                "shrank",
+                "shrunk",
+            },
+        ),
+        ({"open", "opened"}, {"close", "closed", "shut"}),
+    ]
+    _SUBJECT_STOPWORDS = {
+        "a",
+        "an",
+        "and",
+        "are",
+        "as",
+        "at",
+        "by",
+        "for",
+        "from",
+        "in",
+        "is",
+        "of",
+        "on",
+        "or",
+        "the",
+        "to",
+        "was",
+        "were",
+        "with",
+        "today",
+        "yesterday",
+        "now",
+        "this",
+        "last",
+        "year",
+        "month",
+        "quarter",
+    }
+
     def __init__(self) -> None:
         self.cluster_helper = ClusterService()
 
@@ -115,10 +182,13 @@ class SummaryService:
             for right in factual_claims[idx + 1 :]:
                 right_tokens = self.cluster_helper._tokens(right.claim_text)
                 score = self.cluster_helper._jaccard(left_tokens, right_tokens)
+                if score < 0.35:
+                    continue
+
                 relation_type = None
                 # Check contradiction first to avoid classifying strong lexical overlap
                 # negation pairs as supports.
-                if score >= 0.35 and self._is_negation_mismatch(left.claim_text, right.claim_text):
+                if self._has_conflict_signal(left.claim_text, right.claim_text, left_tokens, right_tokens):
                     relation_type = "contradicts"
                 elif score >= 0.6:
                     relation_type = "supports"
@@ -144,6 +214,67 @@ class SummaryService:
         return (left_tokens & neg_words and not right_tokens & neg_words) or (
             right_tokens & neg_words and not left_tokens & neg_words
         )
+
+    def _has_conflict_signal(
+        self,
+        left_text: str,
+        right_text: str,
+        left_tokens: set[str],
+        right_tokens: set[str],
+    ) -> bool:
+        return (
+            self._is_negation_mismatch(left_text, right_text)
+            or self._has_number_mismatch(left_text, right_text)
+            or self._has_antonym_polarity_mismatch(left_text, right_text, left_tokens, right_tokens)
+            or self._has_temporal_conflict(left_text, right_text)
+        )
+
+    @classmethod
+    def _has_number_mismatch(cls, left: str, right: str) -> bool:
+        left_numbers = set(cls._NUMBER_PATTERN.findall(left.lower()))
+        right_numbers = set(cls._NUMBER_PATTERN.findall(right.lower()))
+        return bool(left_numbers and right_numbers and left_numbers != right_numbers)
+
+    @classmethod
+    def _has_antonym_polarity_mismatch(
+        cls,
+        left: str,
+        right: str,
+        left_tokens: set[str],
+        right_tokens: set[str],
+    ) -> bool:
+        shared_subject = {
+            token
+            for token in left_tokens & right_tokens
+            if token not in cls._SUBJECT_STOPWORDS and not token.isdigit() and len(token) > 2
+        }
+        if not shared_subject:
+            return False
+
+        left_words = set(re.findall(r"[a-z0-9]+", left.lower()))
+        right_words = set(re.findall(r"[a-z0-9]+", right.lower()))
+        for positive, negative in cls._ANTONYM_GROUPS:
+            if (left_words & positive and right_words & negative) or (left_words & negative and right_words & positive):
+                return True
+        return False
+
+    @classmethod
+    def _has_temporal_conflict(cls, left: str, right: str) -> bool:
+        left_lower = left.lower()
+        right_lower = right.lower()
+
+        for first, second in cls._TEMPORAL_CONFLICT_PAIRS:
+            if (first in left_lower and second in right_lower) or (second in left_lower and first in right_lower):
+                return True
+
+        left_dates = set(cls._DATE_PATTERN.findall(left_lower))
+        right_dates = set(cls._DATE_PATTERN.findall(right_lower))
+        if left_dates and right_dates and left_dates != right_dates:
+            return True
+
+        left_years = set(cls._YEAR_PATTERN.findall(left_lower))
+        right_years = set(cls._YEAR_PATTERN.findall(right_lower))
+        return bool(left_years and right_years and left_years != right_years)
 
     def _build_cluster_summary(self, db: Session, cluster_id: str, claims: list[models.Claim]) -> models.Summary:
         factual_claims = [claim for claim in claims if is_factual_claim_type(claim.claim_type)]

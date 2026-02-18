@@ -200,7 +200,11 @@ def test_relation_builder_prioritizes_contradiction_over_overlap():
         cluster_service.build_clusters(db, lookback_hours=720, similarity_threshold=0.3)
         summary_service.build_summaries(db)
 
-        claim_ids = [claim.id for claim in db.query(models.Claim).filter(models.Claim.article_id.in_([a1.article_id, a2.article_id])).all()]
+        article_ids = [a1.article_id, a2.article_id]
+        claim_ids = [
+            row[0]
+            for row in db.query(models.Claim.id).filter(models.Claim.article_id.in_(article_ids)).all()
+        ]
         relations = (
             db.query(models.ClaimRelation)
             .filter(models.ClaimRelation.left_claim_id.in_(claim_ids))
@@ -349,99 +353,156 @@ def test_summary_ignores_opinions_and_predictions_in_mixed_claim_types():
         db.close()
 
 
-def test_confidence_increases_with_more_independent_sources():
+def test_relation_builder_marks_conflicting_numbers_as_contradiction():
     Base.metadata.create_all(bind=engine)
     db = SessionLocal()
     try:
-        service = SummaryService()
-        low_source_cluster, low_source_claims = _create_cluster_with_claims(
+        article_service = ArticleService()
+        summary_service = SummaryService()
+
+        article_a = article_service.create_article_from_raw(
             db,
-            source_count=1,
-            claim_texts=["Power grid restored in district north.", "Power grid restored in district south."],
-            confidence=0.8,
+            source_name="S7",
+            source_type="api",
+            url="https://example.com/s7",
+            title="Factory output claim A",
+            raw_text="Company says factory output increased by 40% this quarter.",
         )
-        high_source_cluster, high_source_claims = _create_cluster_with_claims(
+        article_b = article_service.create_article_from_raw(
             db,
-            source_count=2,
-            claim_texts=["Power grid restored in district north.", "Power grid restored in district south."],
-            confidence=0.8,
+            source_name="S8",
+            source_type="api",
+            url="https://example.com/s8",
+            title="Factory output claim B",
+            raw_text="Company says factory output increased by 25% this quarter.",
         )
 
-        low_summary = service._build_cluster_summary(db, low_source_cluster, low_source_claims)
-        high_summary = service._build_cluster_summary(db, high_source_cluster, high_source_claims)
+        claim_a = models.Claim(
+            article_id=article_a.article_id,
+            claim_text="Company says factory output increased by 40% this quarter.",
+            claim_type="observed_fact",
+        )
+        claim_b = models.Claim(
+            article_id=article_b.article_id,
+            claim_text="Company says factory output increased by 25% this quarter.",
+            claim_type="observed_fact",
+        )
+        db.add_all([claim_a, claim_b])
+        db.flush()
 
-        assert high_summary.confidence_score > low_summary.confidence_score
+        created = summary_service._build_relations(db, [claim_a, claim_b])
+
+        relations = (
+            db.query(models.ClaimRelation)
+            .filter(models.ClaimRelation.left_claim_id.in_([claim_a.id, claim_b.id]))
+            .filter(models.ClaimRelation.right_claim_id.in_([claim_a.id, claim_b.id]))
+            .all()
+        )
+        assert created == 1
+        assert relations
+        assert relations[0].relation_type == "contradicts"
     finally:
         db.close()
 
 
-def test_confidence_drops_when_contradiction_density_is_high():
+def test_relation_builder_marks_paraphrases_as_supports():
     Base.metadata.create_all(bind=engine)
     db = SessionLocal()
     try:
-        service = SummaryService()
-        stable_cluster, stable_claims = _create_cluster_with_claims(
+        article_service = ArticleService()
+        summary_service = SummaryService()
+
+        article_a = article_service.create_article_from_raw(
             db,
-            source_count=3,
-            claim_texts=[
-                "Airport resumed operations this morning.",
-                "Airport resumed operations this morning per officials.",
-                "Airport resumed operations this morning with delays.",
-            ],
+            source_name="S9",
+            source_type="api",
+            url="https://example.com/s9",
+            title="Transit disruption headline A",
+            raw_text="City officials confirmed the subway line reopened today.",
         )
-        contradiction_cluster, contradiction_claims = _create_cluster_with_claims(
+        article_b = article_service.create_article_from_raw(
             db,
-            source_count=3,
-            claim_texts=[
-                "Airport resumed operations this morning.",
-                "Airport did not resume operations this morning.",
-                "Airport resumed operations this morning with delays.",
-            ],
+            source_name="S10",
+            source_type="api",
+            url="https://example.com/s10",
+            title="Transit disruption headline B",
+            raw_text="Officials said the city subway line reopened today.",
         )
 
-        service._build_relations(db, stable_claims)
-        service._build_relations(db, contradiction_claims)
+        claim_a = models.Claim(
+            article_id=article_a.article_id,
+            claim_text="City officials confirmed the subway line reopened today.",
+            claim_type="observed_fact",
+        )
+        claim_b = models.Claim(
+            article_id=article_b.article_id,
+            claim_text="Officials said the city subway line reopened today.",
+            claim_type="observed_fact",
+        )
+        db.add_all([claim_a, claim_b])
+        db.flush()
 
-        stable_summary = service._build_cluster_summary(db, stable_cluster, stable_claims)
-        contradiction_summary = service._build_cluster_summary(db, contradiction_cluster, contradiction_claims)
+        created = summary_service._build_relations(db, [claim_a, claim_b])
 
-        assert contradiction_summary.confidence_score < stable_summary.confidence_score
+        relations = (
+            db.query(models.ClaimRelation)
+            .filter(models.ClaimRelation.left_claim_id.in_([claim_a.id, claim_b.id]))
+            .filter(models.ClaimRelation.right_claim_id.in_([claim_a.id, claim_b.id]))
+            .all()
+        )
+        assert created == 1
+        assert relations
+        assert relations[0].relation_type == "supports"
     finally:
         db.close()
 
 
-def test_duplicate_claims_do_not_materially_inflate_confidence():
+def test_relation_builder_skips_low_overlap_unrelated_claims():
     Base.metadata.create_all(bind=engine)
     db = SessionLocal()
     try:
-        service = SummaryService()
-        deduped_cluster, deduped_claims = _create_cluster_with_claims(
+        article_service = ArticleService()
+        summary_service = SummaryService()
+
+        article_a = article_service.create_article_from_raw(
             db,
-            source_count=3,
-            claim_texts=[
-                "Mayor announced emergency shelter openings.",
-                "City confirmed roads are partially reopened.",
-                "Emergency services remain on high alert.",
-            ],
-            confidence=0.9,
+            source_name="S11",
+            source_type="api",
+            url="https://example.com/s11",
+            title="Mars mission update",
+            raw_text="The rover captured mineral samples on Mars.",
         )
-        duplicate_cluster, duplicate_claims = _create_cluster_with_claims(
+        article_b = article_service.create_article_from_raw(
             db,
-            source_count=3,
-            claim_texts=[
-                "Mayor announced emergency shelter openings.",
-                "Mayor announced emergency shelter openings.",
-                "Mayor announced emergency shelter openings.",
-            ],
-            confidence=0.9,
+            source_name="S12",
+            source_type="api",
+            url="https://example.com/s12",
+            title="Market update",
+            raw_text="Coffee prices dropped in European markets.",
         )
 
-        service._build_relations(db, deduped_claims)
-        service._build_relations(db, duplicate_claims)
+        claim_a = models.Claim(
+            article_id=article_a.article_id,
+            claim_text="The rover captured mineral samples on Mars.",
+            claim_type="observed_fact",
+        )
+        claim_b = models.Claim(
+            article_id=article_b.article_id,
+            claim_text="Coffee prices dropped in European markets.",
+            claim_type="observed_fact",
+        )
+        db.add_all([claim_a, claim_b])
+        db.flush()
 
-        deduped_summary = service._build_cluster_summary(db, deduped_cluster, deduped_claims)
-        duplicate_summary = service._build_cluster_summary(db, duplicate_cluster, duplicate_claims)
+        created = summary_service._build_relations(db, [claim_a, claim_b])
 
-        assert duplicate_summary.confidence_score <= deduped_summary.confidence_score + 0.05
+        relations = (
+            db.query(models.ClaimRelation)
+            .filter(models.ClaimRelation.left_claim_id.in_([claim_a.id, claim_b.id]))
+            .filter(models.ClaimRelation.right_claim_id.in_([claim_a.id, claim_b.id]))
+            .all()
+        )
+        assert created == 0
+        assert not relations
     finally:
         db.close()
